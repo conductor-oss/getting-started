@@ -137,6 +137,90 @@ conductor.redis.hosts=<redis-service>:6379:us-east-1c
 conductor.indexing.enabled=false
 ```
 
+## Workflow search with OpenSearch
+
+By default the guide sets `conductor.indexing.enabled=false`, which means the UI's workflow search and history features won't be available. If you need those, Conductor supports OpenSearch 2.x and 3.x as the indexing backend — it works alongside any persistence backend.
+
+Add an OpenSearch StatefulSet and Service to your manifest:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: conductor-opensearch
+  namespace: conductor
+spec:
+  serviceName: conductor-opensearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: conductor-opensearch
+  template:
+    metadata:
+      labels:
+        app: conductor-opensearch
+    spec:
+      initContainers:
+        - name: sysctl
+          image: busybox
+          securityContext:
+            privileged: true
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+      containers:
+        - name: opensearch
+          image: opensearchproject/opensearch:2.15.0  # or 3.6.0 for v3
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: OPENSEARCH_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+            - name: DISABLE_SECURITY_PLUGIN
+              value: "true"
+          ports:
+            - containerPort: 9200
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 20
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: conductor-opensearch
+  namespace: conductor
+spec:
+  selector:
+    app: conductor-opensearch
+  ports:
+    - port: 9200
+      targetPort: 9200
+```
+
+Then update the ConfigMap to enable indexing. For OpenSearch 2.x:
+
+```properties
+conductor.indexing.enabled=true
+conductor.indexing.type=opensearch2
+conductor.opensearch.url=http://conductor-opensearch:9200
+conductor.opensearch.indexPrefix=conductor
+conductor.opensearch.indexReplicasCount=0
+conductor.opensearch.clusterHealthColor=yellow
+```
+
+For OpenSearch 3.x, change only the type:
+
+```properties
+conductor.indexing.type=opensearch3
+```
+
+All other properties are identical between versions.
+
+> **Note:** `clusterHealthColor=yellow` is required for single-node OpenSearch — a single-node cluster never reaches green status. For multi-node production clusters, use `green`.
+
+> **OpenShift:** The `sysctl` init container requires a privileged SCC. Either grant it or set `vm.max_map_count=262144` at the node level via a `MachineConfig`.
+
 ## Production considerations
 
 **Credentials** — Replace the plaintext `stringData` in the Secret with values from your secrets management system (Vault, AWS Secrets Manager, Sealed Secrets, etc.) before going to production.
