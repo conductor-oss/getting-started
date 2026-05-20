@@ -137,13 +137,104 @@ conductor.redis.hosts=<redis-service>:6379:us-east-1c
 conductor.indexing.enabled=false
 ```
 
-## Workflow search with Elasticsearch
+## Workflow search
 
-By default the guide sets `conductor.indexing.enabled=false`, which means the UI's workflow search and history features won't be available. If you need those, the community image (`orkesio/orkes-conductor-community`) includes the **Elasticsearch 7** indexing module (`conductor-es7-persistence`).
+By default the guide sets `conductor.indexing.enabled=false`, which means the UI's workflow search and history features won't be available. Conductor OSS supports two indexing backends — **OpenSearch 2.x** (recommended) and **Elasticsearch 7** — depending on how the server image was built.
 
-> **OpenSearch is not supported in the community image.** Despite Conductor OSS supporting OpenSearch 2.x and 3.x as build options, those modules are not bundled in the community image. Setting `conductor.indexing.type=opensearch2` or `opensearch3` will cause the server to fail at startup with `No qualifying bean of type 'com.netflix.conductor.dao.IndexDAO'`.
+### Option A: OpenSearch 2.x (build from source)
 
-Add an Elasticsearch 7 StatefulSet and Service to your manifest:
+The Conductor server build includes an OpenSearch 2.x persistence module (`conductor-os-persistence-v2`), activated by passing `INDEXING_BACKEND=opensearch` at build time. The pre-built community image does not include this module; you need to build the image yourself from the [conductor-oss/conductor](https://github.com/conductor-oss/conductor) source:
+
+```shell
+git clone git@github.com:conductor-oss/conductor.git
+cd conductor
+docker build \
+  --build-arg INDEXING_BACKEND=opensearch \
+  -f docker/server/Dockerfile \
+  -t conductor:server-opensearch .
+```
+
+Then update your Deployment to use `conductor:server-opensearch` and add an OpenSearch StatefulSet and Service:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: conductor-opensearch
+  namespace: conductor
+spec:
+  serviceName: conductor-opensearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: conductor-opensearch
+  template:
+    metadata:
+      labels:
+        app: conductor-opensearch
+    spec:
+      initContainers:
+        - name: sysctl
+          image: busybox
+          securityContext:
+            privileged: true
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+      containers:
+        - name: opensearch
+          image: opensearchproject/opensearch:2.18.0
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: OPENSEARCH_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+            - name: plugins.security.disabled
+              value: "true"
+          ports:
+            - containerPort: 9200
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health
+              port: 9200
+            initialDelaySeconds: 20
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: conductor-opensearch
+  namespace: conductor
+spec:
+  selector:
+    app: conductor-opensearch
+  ports:
+    - port: 9200
+      targetPort: 9200
+```
+
+Then update the ConfigMap to enable indexing:
+
+```properties
+conductor.indexing.enabled=true
+conductor.indexing.type=opensearch2
+conductor.opensearch.url=http://conductor-opensearch:9200
+conductor.opensearch.indexPrefix=conductor
+conductor.opensearch.indexReplicasCount=0
+conductor.opensearch.clusterHealthColor=yellow
+```
+
+> **Note:** `clusterHealthColor=yellow` is required for single-node OpenSearch — a single-node cluster never reaches green status. For multi-node production clusters, use `green`.
+
+> **OpenSearch 3.x** is not yet supported. The v3 persistence module is under development.
+
+> **OpenShift:** The `sysctl` init container requires a privileged SCC. Either grant it or set `vm.max_map_count=262144` at the node level via a `MachineConfig`.
+
+### Option B: Elasticsearch 7 (pre-built community image)
+
+If you are using the pre-built `orkesio/orkes-conductor-community` image and do not want to build from source, Elasticsearch 7 is the supported indexing backend.
+
+> **Note:** Setting `conductor.indexing.type=opensearch2` or `opensearch3` with the pre-built image will fail at startup with a missing `IndexDAO` bean — the OpenSearch modules are not bundled. Use `conductor.indexing.type=elasticsearch` instead.
+
+Add an Elasticsearch 7 StatefulSet and Service:
 
 ```yaml
 apiVersion: apps/v1
