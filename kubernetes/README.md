@@ -137,28 +137,30 @@ conductor.redis.hosts=<redis-service>:6379:us-east-1c
 conductor.indexing.enabled=false
 ```
 
-## Workflow search with OpenSearch
+## Workflow search with Elasticsearch
 
-By default the guide sets `conductor.indexing.enabled=false`, which means the UI's workflow search and history features won't be available. If you need those, Conductor supports OpenSearch 2.x and 3.x as the indexing backend — it works alongside any persistence backend.
+By default the guide sets `conductor.indexing.enabled=false`, which means the UI's workflow search and history features won't be available. If you need those, the community image (`orkesio/orkes-conductor-community`) includes the **Elasticsearch 7** indexing module (`conductor-es7-persistence`).
 
-Add an OpenSearch StatefulSet and Service to your manifest:
+> **OpenSearch is not supported in the community image.** Despite Conductor OSS supporting OpenSearch 2.x and 3.x as build options, those modules are not bundled in the community image. Setting `conductor.indexing.type=opensearch2` or `opensearch3` will cause the server to fail at startup with `No qualifying bean of type 'com.netflix.conductor.dao.IndexDAO'`.
+
+Add an Elasticsearch 7 StatefulSet and Service to your manifest:
 
 ```yaml
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: conductor-opensearch
+  name: conductor-elasticsearch
   namespace: conductor
 spec:
-  serviceName: conductor-opensearch
+  serviceName: conductor-elasticsearch
   replicas: 1
   selector:
     matchLabels:
-      app: conductor-opensearch
+      app: conductor-elasticsearch
   template:
     metadata:
       labels:
-        app: conductor-opensearch
+        app: conductor-elasticsearch
     spec:
       initContainers:
         - name: sysctl
@@ -167,15 +169,15 @@ spec:
             privileged: true
           command: ["sysctl", "-w", "vm.max_map_count=262144"]
       containers:
-        - name: opensearch
-          image: opensearchproject/opensearch:2.15.0  # or 3.6.0 for v3
+        - name: elasticsearch
+          image: elasticsearch:7.17.11
           env:
             - name: discovery.type
               value: single-node
-            - name: OPENSEARCH_JAVA_OPTS
+            - name: ES_JAVA_OPTS
               value: "-Xms512m -Xmx512m"
-            - name: DISABLE_SECURITY_PLUGIN
-              value: "true"
+            - name: xpack.security.enabled
+              value: "false"
           ports:
             - containerPort: 9200
           readinessProbe:
@@ -188,36 +190,28 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: conductor-opensearch
+  name: conductor-elasticsearch
   namespace: conductor
 spec:
   selector:
-    app: conductor-opensearch
+    app: conductor-elasticsearch
   ports:
     - port: 9200
       targetPort: 9200
 ```
 
-Then update the ConfigMap to enable indexing. For OpenSearch 2.x:
+Then update the ConfigMap to enable indexing:
 
 ```properties
 conductor.indexing.enabled=true
-conductor.indexing.type=opensearch2
-conductor.opensearch.url=http://conductor-opensearch:9200
-conductor.opensearch.indexPrefix=conductor
-conductor.opensearch.indexReplicasCount=0
-conductor.opensearch.clusterHealthColor=yellow
+conductor.indexing.type=elasticsearch
+conductor.elasticsearch.url=http://conductor-elasticsearch:9200
+conductor.elasticsearch.index-prefix=conductor
+conductor.elasticsearch.index-replicas-count=0
+conductor.elasticsearch.cluster-health-color=yellow
 ```
 
-For OpenSearch 3.x, change only the type:
-
-```properties
-conductor.indexing.type=opensearch3
-```
-
-All other properties are identical between versions.
-
-> **Note:** `clusterHealthColor=yellow` is required for single-node OpenSearch — a single-node cluster never reaches green status. For multi-node production clusters, use `green`.
+> **Note:** `clusterHealthColor=yellow` is required for single-node Elasticsearch — a single-node cluster never reaches green status. For multi-node production clusters, use `green`.
 
 > **OpenShift:** The `sysctl` init container requires a privileged SCC. Either grant it or set `vm.max_map_count=262144` at the node level via a `MachineConfig`.
 
