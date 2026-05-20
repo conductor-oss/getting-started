@@ -281,15 +281,18 @@ spec:
 
 **2. SecurityContextConstraints**
 
-If your cluster enforces the `restricted` SCC, add to the Conductor pod spec:
+The community image runs as **root (UID 0)**. The startup script launches nginx (which binds port 5000) and writes logs to `/app/logs/server.log` — both operations require root. This means the image is **incompatible with the `restricted` SCC** and with `runAsNonRoot: true`.
 
-```yaml
-securityContext:
-  runAsNonRoot: true
-  seccompProfile:
-    type: RuntimeDefault
+To run on OpenShift, grant the `anyuid` or `privileged` SCC to the service account in the `conductor` namespace:
+
+```shell
+oc adm policy add-scc-to-user anyuid -z default -n conductor
 ```
 
+> **Do not** add a `securityContext: runAsNonRoot: true` block to the Conductor pod spec — it will prevent nginx from starting and the UI will be unavailable.
+
 If the PostgreSQL pod fails to start due to volume permission issues, add `fsGroup: 999` to its pod spec (999 is the `postgres` GID in the official image).
+
+> **Note on UI availability:** The UI is bundled in the community image and served by nginx on port 5000. If the UI Route returns "Application not available", the most common cause is nginx failing to start due to a restrictive security context — check the pod logs for `Permission denied` errors and verify the SCC grants above have been applied.
 
 `oc` users: all `kubectl` commands in this guide work identically with `oc`.
