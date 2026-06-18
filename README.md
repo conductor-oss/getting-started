@@ -2,6 +2,13 @@
 
 Your hub for getting Conductor OSS up and running. Find deployment guides, sample code, and links to every SDK — or open an issue if something in the new-user experience is broken or missing.
 
+## Guides
+
+| Topic | Guide |
+|---|---|
+| **Workload isolation** | [`workload-isolation/`](./workload-isolation/) — isolate team workloads so one team's spike doesn't affect others |
+| **Local LLM (Ollama)** | [`local-llm-ollama/`](./local-llm-ollama/) — call a local Ollama model from a workflow; no Orkes account or access key needed |
+
 ## Deploy Conductor
 
 Choose the path that fits your environment:
